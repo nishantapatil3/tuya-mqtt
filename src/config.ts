@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { createLogger } from './logger.js';
+const logger = createLogger('config');
 
 const segment = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Use letters, digits, underscores or hyphens');
 const code = z.string().regex(/^[a-zA-Z0-9_]+$/);
@@ -9,6 +11,7 @@ export const cloudSchema = z.object({
   uid: z.string().min(1).optional()
 });
 export const blindSchema = z.object({
+  type: z.literal('blind').default('blind'),
   id: segment, name: z.string().min(1), topic: segment.optional(),
   positionCode: code.default('percent_state'),
   targetCode: code.default('percent_control'), controlCode: code.default('control'),
@@ -21,6 +24,15 @@ export const blindSchema = z.object({
   openingValue: z.string().default('opening'), closingValue: z.string().default('closing'),
   stoppedValue: z.string().default('stopped')
 }).refine(d => d.positionMax > d.positionMin, 'positionMax must exceed positionMin');
+export const wateringPumpSchema = z.object({
+  type: z.literal('wateringPump'),
+  id: segment, name: z.string().min(1), topic: segment.optional(),
+  switchCode: code.default('switch')
+});
+export const deviceSchema = z.preprocess(value => {
+  if (value && typeof value === 'object' && !('type' in value)) return { ...value, type: 'blind' };
+  return value;
+}, z.discriminatedUnion('type', [blindSchema, wateringPumpSchema]));
 export const configSchema = z.object({
   mqttUrl: z.string().refine(value => {
     try { const u = new URL(value); return ['mqtt:', 'mqtts:'].includes(u.protocol) && !!u.hostname; } catch { return false; }
@@ -33,7 +45,7 @@ export const configSchema = z.object({
   motionTimeoutSeconds: z.number().int().min(5).max(300).default(60),
   authMode: z.enum(['cloud', 'sharing']).default('cloud'),
   tuyaCloud: cloudSchema.optional(),
-  devices: z.array(blindSchema).min(1).max(50)
+  devices: z.array(deviceSchema).min(1).max(50)
 }).superRefine((c, ctx) => {
   if (c.authMode === 'cloud' && !c.tuyaCloud) ctx.addIssue({ code: 'custom', message: 'Cloud mode requires tuyaCloud credentials' });
   if (new Set(c.devices.map(d => d.id)).size !== c.devices.length ||
@@ -42,6 +54,8 @@ export const configSchema = z.object({
 });
 export type Config = z.infer<typeof configSchema>;
 export type BlindConfig = z.infer<typeof blindSchema>;
+export type WateringPumpConfig = z.infer<typeof wateringPumpSchema>;
+export type DeviceConfig = z.infer<typeof deviceSchema>;
 export type CloudConfig = z.infer<typeof cloudSchema>;
 export async function loadConfig(path: string): Promise<Config> {
   const data = JSON.parse(await readFile(path, 'utf8'));
@@ -49,5 +63,7 @@ export async function loadConfig(path: string): Promise<Config> {
     ...(process.env.TUYA_ACCESS_ID ? { accessId: process.env.TUYA_ACCESS_ID } : {}),
     ...(process.env.TUYA_ACCESS_SECRET ? { accessSecret: process.env.TUYA_ACCESS_SECRET } : {}) };
   if (process.env.MQTT_URL) data.mqttUrl = process.env.MQTT_URL;
-  return configSchema.parse(data);
+  const config = configSchema.parse(data);
+  logger.info('loaded', { path, authMode: config.authMode, deviceCount: config.devices.length });
+  return config;
 }

@@ -1,6 +1,8 @@
 import { createHash, createHmac, createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Device, Specification } from './cloud.js';
+import { createLogger } from './logger.js';
+const logger = createLogger('sharing');
 
 // Protocol reference: Tuya's official tuya-device-sharing-sdk (user.py, customerapi.py).
 export const sharingClientId = process.env.TUYA_SHARING_CLIENT_ID ?? 'HA_3y9q4ak7g4ephrvke';
@@ -21,9 +23,12 @@ export type SharingSession = z.infer<typeof sessionSchema>;
 type Envelope<T> = { success: boolean; result: T; t: number; code?: string | number };
 class TuyaConnectionError extends Error {}
 async function response<T>(fetcher: typeof fetch, url: string, options: RequestInit): Promise<Envelope<T>> {
+  const started = Date.now(), path = new URL(url).pathname;
+  logger.debug('request.start', { method: options.method, path });
   let result: Response;
   try { result = await fetcher(url, { ...options, signal: AbortSignal.timeout(15000) }); }
-  catch { throw new TuyaConnectionError('Tuya connection failed or timed out. Check your internet connection and try again.'); }
+  catch { logger.warn('request.connection_failed', { path, elapsedMs: Date.now() - started }); throw new TuyaConnectionError('Tuya connection failed or timed out. Check your internet connection and try again.'); }
+  logger.debug('request.response', { path, status: result.status, elapsedMs: Date.now() - started });
   if (!result.ok) throw new Error(`Tuya HTTP ${result.status}`);
   return await result.json() as Envelope<T>;
 }
@@ -31,6 +36,7 @@ export class SharingLogin {
   private pending?: { token: string; userCode: string; expires: number; id: string; session?: SharingSession };
   constructor(private fetcher: typeof fetch = fetch) {}
   async start(userCode: string) {
+    logger.info('qr.start');
     userCode = z.string().trim().min(1).max(128).parse(userCode);
     const id = randomUUID();
     // A newer attempt supersedes an older in-flight start or poll.
@@ -42,12 +48,16 @@ export class SharingLogin {
     catch (error) {
       // QR creation can safely retry a lost connection; never apply this to motor commands.
       if (!(error instanceof TuyaConnectionError) || this.pending?.id !== id) throw error;
+      logger.warn('qr.retry_connection');
       data = await response<{ qrcode: string }>(this.fetcher, url, { method: 'POST' });
     }
     if (this.pending?.id !== id) throw new Error('QR login was replaced; use the newest code');
-    if (!data.success || typeof data.result?.qrcode !== 'string' || !data.result.qrcode)
+    if (!data.success || typeof data.result?.qrcode !== 'string' || !data.result.qrcode) {
+      logger.warn('qr.rejected', { code: data.code });
       throw new Error('Could not create a QR code. Check your app User Code and try again.');
+    }
     this.pending.token = data.result.qrcode;
+    logger.info('qr.ready');
     return { id, content: `tuyaSmart--qrLogin?token=${data.result.qrcode}`, expiresAt: this.pending.expires };
   }
   async check(id: string): Promise<SharingSession | undefined> {
@@ -60,6 +70,7 @@ export class SharingLogin {
       `${gateway}/v1.0/m/life/home-assistant/qrcode/tokens/${encodeURIComponent(pending.token)}?${query}`, { method: 'GET' });
     if (this.pending?.id !== id) throw new Error('QR login was replaced; use the newest code');
     if (!data.success) {
+      logger.debug('qr.awaiting_approval', { code: data.code });
       if (Date.now() >= pending.expires) throw new Error('QR login expired. Generate a new code and scan it in the app.');
       return undefined;
     }
@@ -70,6 +81,7 @@ export class SharingLogin {
         access_token: info.access_token, refresh_token: info.refresh_token } });
     // Cache an approved result so a lost browser response or failed local save can retry safely.
     pending.session = session;
+    logger.info('qr.approved');
     return session;
   }
 }
@@ -110,7 +122,7 @@ export class SharingCloud {
       (query ? `?${new URLSearchParams({ encdata: query })}` : ''), {
       method, headers, ...(encryptedBody ? { body: JSON.stringify({ encdata: encryptedBody }) } : {})
     });
-    if (!data.success) throw new Error('Tuya sharing request failed. Try reconnecting with a new QR code.');
+    if (!data.success) { logger.warn('request.rejected', { method, path, code: data.code }); throw new Error('Tuya sharing request failed. Try reconnecting with a new QR code.'); }
     const decrypted = decryptSharing(data.result, secret);
     let result: T;
     try { result = JSON.parse(decrypted) as T; } catch { result = decrypted as T; }
@@ -119,11 +131,13 @@ export class SharingCloud {
   private async authenticate() {
     if (this.session.token.t + this.session.token.expire_time * 1000 - 60000 > Date.now()) return;
     if (!this.refreshing) this.refreshing = (async () => {
+      logger.info('session.renew_start');
       const { result, t } = await this.raw<{ accessToken: string; refreshToken: string; expireTime: number; uid: string }>('GET',
         `/v1.0/m/token/${encodeURIComponent(this.session.token.refresh_token)}`);
       this.session = sessionSchema.parse({ ...this.session, token: { t, uid: result.uid, expire_time: result.expireTime,
         access_token: result.accessToken, refresh_token: result.refreshToken } });
       await this.save(this.session);
+      logger.info('session.renewed', { expiresInSeconds: result.expireTime });
     })().finally(() => { this.refreshing = undefined; });
     await this.refreshing;
   }
@@ -134,16 +148,18 @@ export class SharingCloud {
   async device(id: string): Promise<Device> {
     const devices = await this.request<Device[]>('GET', '/v1.0/m/life/ha/devices/detail', { devIds: id });
     const found = devices.find(d => d.id === id);
-    if (!found) throw new Error('Blind unavailable in the linked account');
+    if (!found) throw new Error('Device unavailable in the linked account');
     return found;
   }
   specifications(id: string) { return this.request<Specification>('GET', `/v1.1/m/life/${encodeURIComponent(id)}/specifications`); }
   async devices(): Promise<Device[]> {
+    logger.info('discovery.start');
     const homes = await this.request<{ ownerId: string | number }[]>('GET', '/v1.0/m/life/users/homes');
     const devices = new Map<string, Device>();
     for (const home of homes) {
       for (const device of await this.request<Device[]>('GET', '/v1.0/m/life/ha/home/devices', { homeId: String(home.ownerId) })) devices.set(device.id, device);
     }
+    logger.info('discovery.complete', { deviceCount: devices.size, homeCount: homes.length });
     return [...devices.values()];
   }
   async command(id: string, code: string, value: unknown) {

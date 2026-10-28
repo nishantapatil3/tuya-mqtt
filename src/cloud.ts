@@ -1,5 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import type { CloudConfig } from './config.js';
+import { createLogger } from './logger.js';
+const logger = createLogger('cloud');
 
 export const endpoints = {
   us: 'https://openapi.tuyaus.com', 'us-east': 'https://openapi-ueaz.tuyaus.com',
@@ -24,6 +26,8 @@ export class TuyaCloud {
   private refreshing?: Promise<void>;
   constructor(private config: CloudConfig, private fetcher: typeof fetch = fetch) {}
   private async raw<T>(method: string, path: string, body?: unknown, token = this.token): Promise<T> {
+    const started = Date.now();
+    logger.debug('request.start', { method, path });
     const text = body === undefined ? '' : JSON.stringify(body);
     const t = String(Date.now());
     const headers: Record<string, string> = {
@@ -37,19 +41,22 @@ export class TuyaCloud {
       response = await this.fetcher(endpoints[this.config.region] + path, {
         method, headers, ...(body === undefined ? {} : { body: text }), signal: AbortSignal.timeout(15000)
       });
-    } catch { throw new Error('Tuya connection failed or timed out'); }
+    } catch { logger.warn('request.connection_failed', { method, path, elapsedMs: Date.now() - started }); throw new Error('Tuya connection failed or timed out'); }
+    logger.debug('request.response', { method, path, status: response.status, elapsedMs: Date.now() - started });
     if (!response.ok) throw new Error(`Tuya HTTP ${response.status}`);
     const data = await response.json() as Envelope<T>;
-    if (!data.success) throw new TuyaError(data.code, data.msg ?? 'Request failed');
+    if (!data.success) { logger.warn('request.rejected', { method, path, code: data.code }); throw new TuyaError(data.code, data.msg ?? 'Request failed'); }
     return data.result;
   }
   private async authenticate() {
     if (this.token && Date.now() < this.expires) return;
     if (!this.refreshing) this.refreshing = (async () => {
+      logger.info('authentication.start');
       const data = await this.raw<{ access_token: string; expire_time: number }>('GET', '/v1.0/token?grant_type=1', undefined, '');
       if (!data.access_token || !Number.isFinite(data.expire_time)) throw new Error('Invalid Tuya token response');
       this.token = data.access_token;
       this.expires = Date.now() + Math.max(1, data.expire_time - 60) * 1000;
+      logger.info('authentication.ready', { expiresInSeconds: data.expire_time });
     })().finally(() => { this.refreshing = undefined; });
     await this.refreshing;
   }
@@ -60,6 +67,7 @@ export class TuyaCloud {
     catch (error) {
       // Retry only an explicit token rejection; never replay a command after an ambiguous timeout.
       if (!(error instanceof TuyaError) || ![1010, 1011].includes(error.code ?? 0)) throw error;
+      logger.warn('authentication.renew_after_rejection', { code: error.code });
       if (this.token === usedToken) { this.token = ''; this.expires = 0; }
       await this.authenticate();
       return this.raw<T>(method, path, body);

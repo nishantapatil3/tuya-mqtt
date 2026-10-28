@@ -11,7 +11,7 @@ import { Script } from 'node:vm';
 test('setup serves a working page and enforces token, host, origin and configuration validation', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'tuya-mqtt-test-'));
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
-    env: { ...process.env, TUYA_MQTT_PORT: '0', TUYA_MQTT_HOST: '127.0.0.1', TUYA_MQTT_CONFIG: join(dir, 'config.json') },
+    env: { ...process.env, LOG_LEVEL: 'info', TUYA_MQTT_PORT: '0', TUYA_MQTT_HOST: '127.0.0.1', TUYA_MQTT_CONFIG: join(dir, 'config.json') },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   t.after(async () => { child.kill('SIGTERM'); if (child.exitCode === null) await once(child, 'exit'); await rm(dir, { recursive: true, force: true }); });

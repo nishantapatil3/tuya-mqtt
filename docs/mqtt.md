@@ -28,3 +28,16 @@ To exercise a configured blind manually (these commands move it):
 mosquitto_pub -h YOUR_BROKER -t tuya/living-room/target/set -m 50
 mosquitto_pub -h YOUR_BROKER -t tuya/living-room/command/set -m STOP
 ```
+
+## Watering pumps
+
+For a pump with topic `plant-pump`:
+
+| Topic | Payload | Retained |
+| --- | --- | --- |
+| `tuya/plant-pump/on/set` | `true` / `false` (also accepts `1` / `0`) | **Never** |
+| `tuya/plant-pump/on` | Confirmed `true` / `false` | Yes |
+| `tuya/plant-pump/availability` | `online` / `offline` | Yes |
+| `tuya/plant-pump/error` | Command error | No |
+
+Bridge availability and retained-command handling work the same as for blinds. The generated mqttthing configuration uses a sprinkler `valve` with `getActive`, `setActive` and `getInUse`, explicit `true` / `false` payloads, and mqttthing's built-in `durationTimer`. Homebridge sends `false` on `on/set` at the end of a timed run. Direct MQTT starts and Tuya-app starts do not start the Homebridge timer.

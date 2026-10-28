@@ -4,11 +4,13 @@ import { randomBytes } from 'node:crypto';
 import { configSchema, cloudSchema, loadConfig } from './config.js';
 import { TuyaCloud } from './cloud.js';
 import { TuyaBridge, safeError } from './bridge.js';
-import { mqttthing, suggestBlind } from './blind.js';
+import { mqttthing, suggestDevice } from './blind.js';
 import { isLocalHost } from './web-access.js';
 import { SharingLogin, SharingCloud } from './sharing.js';
 import { loadSharing, savePrivate, sharingSessionPath } from './storage.js';
 import QRCode from 'qrcode';
+import { createLogger } from './logger.js';
+const logger = createLogger('server');
 
 const configPath = process.env.TUYA_MQTT_CONFIG ?? './data/config.json';
 const port = Number(process.env.TUYA_MQTT_PORT ?? 3200);
@@ -19,17 +21,18 @@ let sharing: SharingCloud | undefined;
 const login = new SharingLogin();
 let linkedQrId: string | undefined;
 let linking: Promise<void> | undefined;
-try { sharing = await loadSharing(configPath); } catch { /* A new QR scan can restore an absent or invalid session. */ }
+try { sharing = await loadSharing(configPath); } catch (error) { logger.info('session.unavailable', { error }); }
 const csrf = randomBytes(24).toString('hex');
 async function activate() {
   const config = await loadConfig(configPath);
+  logger.info('bridge.activate', { deviceCount: config.devices.length, authMode: config.authMode });
   if (config.authMode === 'sharing' && !sharing) throw new Error('Connect using a QR code first');
   await bridge?.stop();
   bridge = new TuyaBridge(config, config.authMode === 'sharing' ? sharing : undefined); bridge.start();
 }
 try { await activate(); }
 catch (error) {
-  console.log((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'Open the setup page to configure your blinds' : 'Configuration could not be loaded; use the setup page to correct it');
+  logger.info((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'setup.required' : 'configuration.load_failed', { error });
 }
 const html = (await readFile(new URL('./setup.html', import.meta.url), 'utf8')).replace('__CSRF__', csrf);
 function send(res: ServerResponse, status: number, data: unknown) {
@@ -46,6 +49,8 @@ async function input(req: IncomingMessage) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 const server = createServer(async (req, res) => {
+  const started = Date.now(), path = req.url?.split('?')[0];
+  res.on('finish', () => logger.debug('http.complete', { method: req.method, path, status: res.statusCode, elapsedMs: Date.now() - started }));
   try {
     if (!isLocalHost(req.headers.host ?? '')) return send(res, 403, { error: 'Use localhost, a private IP address, or a .local hostname' });
     if (req.method === 'GET' && req.url === '/') {
@@ -68,6 +73,7 @@ const server = createServer(async (req, res) => {
         image: await QRCode.toDataURL(qr.content, { errorCorrectionLevel: 'Q', width: 300, margin: 4 }) });
     }
     if (req.url === '/api/qr/check') {
+      logger.debug('qr.check');
       if (body.id === linkedQrId && sharing) return send(res, 200, { linked: true });
       const session = await login.check(body.id);
       if (!session) return send(res, 200, { linked: false });
@@ -77,6 +83,7 @@ const server = createServer(async (req, res) => {
         await savePrivate(sharingSessionPath(configPath), session);
         sharing = new SharingCloud(session, next => savePrivate(sharingSessionPath(configPath), next));
         linkedQrId = body.id;
+        logger.info('account.linked');
         if (bridge?.config.authMode === 'sharing') await activate();
       })().finally(() => { linking = undefined; });
       await linking;
@@ -95,8 +102,9 @@ const server = createServer(async (req, res) => {
         const spec = await cloud.specifications(device.id);
         result.push({ id: device.id, name: device.name, category: device.category, online: device.online,
           status: device.status, functions: spec.functions, statusSchema: spec.status,
-          suggestedMapping: suggestBlind(device, spec) });
+          suggestedMapping: suggestDevice(device, spec) });
       }
+      logger.info('devices.inspected', { deviceCount: result.length, supportedCount: result.filter(d => d.suggestedMapping).length });
       return send(res, 200, result);
     }
     if (saving) return send(res, 409, { error: 'Another save is in progress' });
@@ -104,19 +112,27 @@ const server = createServer(async (req, res) => {
     if (config.authMode === 'sharing' && !sharing) throw new Error('QR login expired or was replaced. Generate a new code.');
     saving = true;
     try {
+      logger.info('configuration.save', { deviceCount: config.devices.length, authMode: config.authMode });
       await savePrivate(configPath, config);
       await activate();
       return send(res, 200, { ok: true });
     } finally { saving = false; }
   } catch (error) {
+    logger.warn('http.failed', { method: req.method, path, reason: safeError(error) });
     if (error && typeof error === 'object' && 'issues' in error)
       return send(res, 400, { error: 'Invalid configuration. Check required fields, region, unique device IDs, and polling intervals.' });
     return send(res, 400, { error: safeError(error) });
   }
 });
 server.requestTimeout = 30000;
-server.listen(port, host, () => console.log(`Tuya MQTT setup: http://${host}:${(server.address() as { port: number }).port}`));
+server.on('error', error => {
+  logger.error('listen.failed', { code: (error as NodeJS.ErrnoException).code, host, port });
+  process.exitCode = 1;
+  void bridge?.stop();
+});
+server.listen(port, host, () => logger.info('listening', { url: `http://${host}:${(server.address() as { port: number }).port}` }));
 async function shutdown() {
+  logger.info('shutdown');
   server.close();
   const deadline = setTimeout(() => process.exit(1), 10000); deadline.unref();
   await bridge?.stop();

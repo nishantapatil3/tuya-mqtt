@@ -4,7 +4,7 @@
 
 ## Requirements
 
-1. Blinds already working in Tuya Smart or Smart Life.
+1. Supported devices already working in Tuya Smart or Smart Life.
 2. **Recommended: your app's User Code and a QR scan.** Find the User Code under **Me → Settings → Account and Security → User Code**. This is different from a developer-project UID. A developer account, Access ID/Secret and manual data-center selection are not required for this login. See [Home Assistant's Tuya onboarding](https://www.home-assistant.io/integrations/tuya/).
 3. An accessible MQTT broker, such as Mosquitto. This bridge does not include a broker.
 4. Homebridge with mqttthing installed.
@@ -15,7 +15,7 @@ Both login modes still use cloud polling. At 60 seconds, each blind uses about *
 
 ### About QR authorization
 
-The TypeScript implementation follows Tuya's official [device-sharing SDK protocol](https://github.com/tuya/tuya-device-sharing-sdk), including encrypted requests and token renewal. By default it uses the public app registration used by Home Assistant (`HA_3y9q4ak7g4ephrvke`, schema `haauthorize`). **Tuya's authorization screen may identify the app as Home Assistant.** This project is independent of Home Assistant. A successful scan grants the device-sharing access allowed by Tuya; the bridge only sends commands to your configured blinds.
+The TypeScript implementation follows Tuya's official [device-sharing SDK protocol](https://github.com/tuya/tuya-device-sharing-sdk), including encrypted requests and token renewal. By default it uses the public app registration used by Home Assistant (`HA_3y9q4ak7g4ephrvke`, schema `haauthorize`). **Tuya's authorization screen may identify the app as Home Assistant.** This project is independent of Home Assistant. A successful scan grants the device-sharing access allowed by Tuya; the bridge only sends commands to your configured devices.
 
 Tuya can change or restrict this registration/flow. For a separately registered integration, set `TUYA_SHARING_CLIENT_ID` and `TUYA_SHARING_SCHEMA` to values issued by Tuya. This is a different API from the developer-project OpenAPI: QR tokens cannot simply be substituted for an Access ID/Secret.
 
@@ -42,8 +42,8 @@ docker compose down
 `docker compose down` preserves the data volume. To rebuild after updating the source, run `docker compose up -d --build` again. To use a different local port, run `TUYA_MQTT_WEB_PORT=3201 docker compose up -d` and open localhost:3201. Stop any earlier Node process using port 3200 before starting Compose on that port.
 
 1. Leave **User Code + QR code** selected, enter your app's User Code, and select **Generate QR code**.
-2. In Smart Life or Tuya Smart tap **+ → Scan**, scan the displayed code and approve. Setup detects approval automatically; **I've approved it — connect** can also check immediately. The bridge lists devices and selects recognized compatible blinds. This does not move them. On later visits, the saved session automatically loads the device list; **Inspect devices** refreshes it.
-3. Enter your MQTT broker URL, review the selected blinds, and save. If your blind is not recognized, inspect the returned capabilities and adjust mappings in the configuration file; only `cl` and `clkg` devices with recognized position and control schemas receive automatic suggestions. Verify percentage direction with one blind before configuring the rest.
+2. In Smart Life or Tuya Smart tap **+ → Scan**, scan the displayed code and approve. Setup detects approval automatically; **I've approved it — connect** can also check immediately. The bridge lists devices and selects recognized compatible devices. This does not move them. On later visits, the saved session automatically loads the device list; **Inspect devices** refreshes it.
+3. Enter your MQTT broker URL, review the selected devices, and save. If your blind is not recognized, inspect the returned capabilities and adjust mappings in the configuration file; `cl`/`clkg` blinds and `ggq` watering pumps with compatible schemas receive automatic suggestions. Verify percentage direction with one blind before configuring the rest.
 4. Refresh status. A blind becomes online after its mappings validate and its first position read succeeds.
 5. Copy the generated mqttthing accessory objects into Homebridge's `accessories` array and restart Homebridge. Replace MQTT credential placeholders if present. The broker address must be reachable from Homebridge too.
 
