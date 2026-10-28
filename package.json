@@ -1,0 +1,30 @@
+{
+  "name": "tuya-mqtt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tuya Cloud window blinds to MQTT and Homebridge mqttthing",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc && node --input-type=module -e \"import {copyFileSync} from 'node:fs'; copyFileSync('src/setup.html', 'dist/setup.html')\"",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "inspect": "tsx src/inspect.ts",
+    "test": "tsx --test test/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mqtt": "^5.15.0",
+    "qrcode": "^1.5.4",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "aedes": "^1.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya MQTT · Devices</title>
+<style>
+body{font:16px system-ui;background:#f3f5f4;color:#19342d;margin:0}main{max-width:850px;margin:48px auto;padding:24px}h1{font-size:36px;margin-bottom:8px}p{line-height:1.6}section{background:white;padding:24px;border-radius:16px;margin:24px 0}label{display:block;margin:16px 0 6px}input,select,textarea{box-sizing:border-box;width:100%;padding:10px;border:1px solid #b9c8c2;border-radius:6px;font:inherit}textarea,pre{font:13px ui-monospace,monospace}button{background:#165b48;color:white;border:0;border-radius:8px;padding:12px 18px;margin:16px 8px 0 0;cursor:pointer}button:disabled{opacity:.5}pre{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#52665e}#notice{white-space:pre-wrap}a{color:#165b48}
+</style>
+<main><small>TUYA CLOUD → MQTT → HOMEBRIDGE</small><h1>Your devices, connected.</h1>
+<p>Connect your Smart Life or Tuya Smart account, choose your devices, then connect MQTT.</p>
+<section><h2>Supported devices</h2><ul><li><strong>Window blinds</strong> — open, close, stop and percentage positioning. Position 0 means closed; 100 means open.</li></ul><p><small>Window blinds are the only supported device type for now.</small></p></section>
+<section><h2>1. Connect your account</h2>
+<label for="mode">Connection method</label><select id="mode"><option value="sharing">User Code + QR code (recommended)</option><option value="cloud">Developer cloud project (advanced)</option></select>
+<div id="sharingFields"><p>In your app, open <strong>Me → Settings → Account and Security → User Code</strong>. This is the app's User Code, not your developer-project UID.</p>
+<label for="userCode">User Code</label><input id="userCode" autocomplete="off">
+<button id="qrStart">Generate QR code</button><p id="qrNotice" role="status" aria-live="polite"></p>
+<div id="qrPanel" hidden><img id="qrImage" width="300" height="300" alt="Scan this login QR code in Smart Life or Tuya Smart"><p>In the app, tap <strong>+ → Scan</strong>, scan this code and confirm login.</p><button id="qrCheck">I've approved it — connect</button></div>
+<p><small>This uses Tuya's device-sharing login and Home Assistant's public app registration. The approval screen may say Home Assistant. Approve only the code you just generated here. No developer project or Access ID/Secret is needed.</small></p></div>
+<div id="cloudFields" hidden><p>Link your Smart Life or Tuya Smart account to a cloud project first. Use that project's data center and API credentials.</p>
+<label for="region">Data center</label><select id="region"><option value="us">Western America</option><option value="us-east">Eastern America</option><option value="eu">Central Europe</option><option value="eu-west">Western Europe</option><option value="cn">China</option><option value="in">India</option><option value="sg">Singapore</option></select>
+<label for="accessId">Access ID</label><input id="accessId" autocomplete="off">
+<label for="accessSecret">Access secret</label><input id="accessSecret" type="password" autocomplete="off">
+<label for="uid">App account UID (optional, to list devices)</label><input id="uid" autocomplete="off">
+</div><label for="ids">Device IDs (optional; leave blank to list your account)</label><input id="ids" placeholder="Optional device IDs, separated by commas">
+<button id="inspect">Inspect devices</button><p><small>Inspection shows device capabilities without sending control commands. Use the results to check codes and ranges below.</small></p><details><summary>Device details (advanced)</summary><pre id="discovered"></pre></details></section>
+<section><h2>2. MQTT and devices</h2><label for="mqtt">MQTT broker URL</label><input id="mqtt" value="mqtt://localhost:1883" autocomplete="off">
+<label for="prefix">Topic prefix</label><input id="prefix" value="tuya">
+<label for="interval">Normal poll interval, seconds</label><input id="interval" type="number" min="10" value="60">
+<h3>Choose your devices</h3><p>Connect and inspect your account to find compatible devices. Select the devices you want to connect to MQTT.</p><div id="choices"></div>
+<p><small>Saving replaces the current configuration. Your QR session is saved privately and reused after a restart.</small></p>
+<button id="save">Save and start bridge</button></section>
+<p id="notice" role="status" aria-live="polite"></p>
+<section><h2>3. Homebridge mqttthing</h2><p>Copy these accessories into Homebridge. If your broker uses a password, replace the credential placeholders.</p><button id="export">Refresh configuration</button><pre id="exported"></pre></section>
+<section><h2>Bridge status</h2><button id="status">Refresh status</button><pre id="state"></pre></section>
+<p><small>This setup page has no login. Keep it on your computer or a trusted home network. Configuration and secrets are stored in the data folder.</small></p></main>
+<script>
+const token='__CSRF__';
+const el=id=>document.getElementById(id);
+let qrId, qrTimer, qrExpires=0, checking=false, candidates=[], selectedDevices=[];
+el('mode').onchange=()=>{el('sharingFields').hidden=el('mode').value!=='sharing';el('cloudFields').hidden=el('mode').value!=='cloud'};
+function cloud(){return {region:el('region').value,accessId:el('accessId').value.trim(),accessSecret:el('accessSecret').value,...(el('uid').value.trim()?{uid:el('uid').value.trim()}:{})}}
+async function api(path,body){const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-setup-token':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await r.json();if(!r.ok)throw new Error(result.error);return result}
+function action(id,fn){el(id).onclick=async()=>{el(id).disabled=true;el('notice').textContent='Working…';try{const message=await fn();el('notice').textContent=message||'Done.'}catch(e){el('notice').textContent=e.message}finally{el(id).disabled=false}}}
+action('qrStart',async()=>{clearTimeout(qrTimer);el('qrPanel').hidden=true;qrId=undefined;el('qrNotice').textContent='Contacting Tuya… A slow connection will retry once.';try{const qr=await api('qr/start',{userCode:el('userCode').value.trim()});qrId=qr.id;qrExpires=qr.expiresAt;el('qrImage').src=qr.image;el('qrPanel').hidden=false;el('qrNotice').textContent='Scan and approve within three minutes.';scheduleApproval();return 'QR code ready. Approval will be detected automatically.'}catch(error){el('qrNotice').textContent=error.message;throw error}});
+async function inspect(){const devices=await api('inspect',{authMode:el('mode').value,...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),ids:el('ids').value.split(',').map(s=>s.trim()).filter(Boolean)});el('discovered').textContent=JSON.stringify(devices,null,2);candidates=devices.filter(d=>d.suggestedMapping).map(d=>d.suggestedMapping);el('choices').replaceChildren();const checks=[];function update(){selectedDevices=candidates.filter((_,i)=>checks[i].checked)}candidates.forEach((d,i)=>{const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.style.width='auto';check.checked=true;check.onchange=update;checks.push(check);label.append(check,document.createTextNode(' '+d.name));el('choices').append(label)});update();return candidates.length+' compatible device(s) found. Review your selection before saving.'}
+async function checkApproval(){
+ if(!qrId)return false;if(checking)return false;
+ checking=true;const id=qrId;
+ try{const result=await api('qr/check',{id});if(id!==qrId||!result.linked)return false;
+ clearTimeout(qrTimer);qrId=undefined;el('qrPanel').hidden=true;el('qrNotice').textContent='Account connected. Your session is saved.';
+ try{el('notice').textContent=await inspect()}catch(error){el('notice').textContent='Account connected, but device listing failed: '+error.message}
+ el('state').textContent=JSON.stringify(await api('status'),null,2);return true;
+ }finally{checking=false}
+}
+function scheduleApproval(){clearTimeout(qrTimer);if(!qrId)return;qrTimer=setTimeout(async()=>{
+ try{if(await checkApproval())return;el('qrNotice').textContent='Waiting for approval in your app…'}
+ catch(error){el('qrNotice').textContent=error.message;if(error.message.startsWith('QR login expired'))return}
+ if(qrId&&Date.now()<qrExpires)scheduleApproval();else if(qrId)el('qrNotice').textContent='This QR code may have expired. If already approved, click connect to check; otherwise generate a new code.';
+ },2500)}
+action('qrCheck',async()=>{if(!qrId)throw new Error('Generate a QR code first, or use the saved session.');const linked=await checkApproval();return linked?el('notice').textContent:'Not approved yet. Scan the code and confirm in the app.'});
+action('inspect',inspect);
+action('save',async()=>{await api('configure',{authMode:el('mode').value,mqttUrl:el('mqtt').value,topicPrefix:el('prefix').value,pollIntervalSeconds:Number(el('interval').value),...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),devices:selectedDevices});el('exported').textContent=JSON.stringify(await api('mqttthing'),null,2);el('state').textContent=JSON.stringify(await api('status'),null,2)});
+action('export',async()=>{el('exported').textContent=JSON.stringify(await api('mqttthing'),null,2)});
+action('status',async()=>{el('state').textContent=JSON.stringify(await api('status'),null,2)});
+api('status').then(async s=>{el('state').textContent=JSON.stringify(s,null,2);if(s.sharingLinked){el('qrNotice').textContent='Account connected. Your saved session is ready.';try{el('notice').textContent=await inspect()}catch(error){el('notice').textContent='Account connected, but device listing failed: '+error.message}}}).catch(()=>{});
+</script></html>

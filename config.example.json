@@ -1,0 +1,27 @@
+{
+  "mqttUrl": "mqtt://localhost:1883",
+  "topicPrefix": "tuya",
+  "clientId": "tuya-mqtt",
+  "pollIntervalSeconds": 60,
+  "motionPollSeconds": 5,
+  "motionTimeoutSeconds": 60,
+  "tuyaCloud": {
+    "region": "us",
+    "accessId": "YOUR_ACCESS_ID",
+    "accessSecret": "YOUR_ACCESS_SECRET"
+  },
+  "devices": [
+    {
+      "id": "YOUR_DEVICE_ID",
+      "name": "Living Room Blinds",
+      "topic": "living-room",
+      "positionCode": "percent_state",
+      "targetCode": "percent_control",
+      "controlCode": "control",
+      "openValue": "open",
+      "closeValue": "close",
+      "stopValue": "stop",
+      "invertPosition": false
+    }
+  ]
+}

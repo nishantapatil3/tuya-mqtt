@@ -1,0 +1,18 @@
+services:
+  tuya-mqtt:
+    image: tuya-mqtt:local
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TUYA_MQTT_WEB_PORT:-3200}:3200"
+    volumes:
+      - tuya-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp
+volumes:
+  tuya-data:
