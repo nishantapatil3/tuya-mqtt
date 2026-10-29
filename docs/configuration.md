@@ -7,7 +7,6 @@ See [config.example.json](../config.example.json) for a developer-project config
 ## v0.1 scope
 
 - Window blinds with open, close, stop and percentage targets.
-- Watering pumps with Boolean on/off control and state feedback.
 - Real position feedback, accepted targets, measured movement direction and availability.
 - Configurable Tuya codes, percentage direction, numeric ranges and string targets.
 - Startup synchronization, broker reconnects, token renewal and bounded polling backoff.
@@ -22,6 +21,7 @@ The default codes are `percent_state` for observed position, `percent_control` f
 
 | Device option | Default | Meaning |
 | --- | --- | --- |
+| `type` | `blind` | Only window blinds are supported; may be omitted in existing configurations |
 | `id`, `name` | Required | Tuya device ID and Homebridge display name |
 | `topic` | Device ID | Stable topic segment; letters, digits, `_`, `-` |
 | `positionCode` | `percent_state` | Actual reported position, not just a writable command echo |
@@ -51,19 +51,3 @@ Without `workStateCode`, direction is inferred from successive position readings
 Polling runs serially per blind, without overlapping that blind's commands. After each accepted blind command, fast polling continues for at least 20 seconds, even if the requested position or a stop is confirmed immediately. Each new command restarts this window. Pending movement continues fast polling until the requested position is observed or the motion timeout expires; then the normal idle interval resumes once the 20-second window has also elapsed. A stop reconciles the target to the next observed position. Timeouts do not cause motor commands to be automatically replayed. Explicit token-rejection errors renew authentication and retry once.
 
 Supported region keys: `us` (Western America), `us-east`, `eu` (Central Europe), `eu-west`, `cn`, `in`, `sg`. See [Tuya's endpoint reference](https://developer.tuya.com/en/docs/iot/api-request?id=Ka4a8uuo1j4t4).
-
-## Watering pump mappings
-
-Watering pumps use `type: "wateringPump"` and `switchCode: "switch"`. Setup recognizes Tuya category `ggq` when that code is both readable and writable as a Boolean. Existing device configurations without a `type` remain window blinds.
-
-```json
-{
-  "type": "wateringPump",
-  "id": "YOUR_PUMP_DEVICE_ID",
-  "name": "Plant Watering Pump",
-  "topic": "plant-pump",
-  "switchCode": "switch"
-}
-```
-
-The pump is exported to mqttthing as a `valve` with `valveType: "sprinkler"`, Boolean on/off payloads, and `durationTimer: true`. Set its run duration in Apple Home (1–3600 seconds); mqttthing sends the off command when that time elapses. Homebridge, the bridge, MQTT and the Tuya connection must remain available to stop it. This timer is managed by Homebridge, not by the pump. Only confirmed cloud readings update its reported state. Following a command, the bridge briefly polls for confirmation using the configured motion polling intervals. A native Tuya duration setting, flow readings, moisture readings and schedules are not exposed by this device's current cloud interface. Timed runs apply to starts made through this Homebridge accessory; starts in the Tuya app use that app's own behavior.

@@ -29,13 +29,12 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   const commands: { code: string; value: unknown }[] = [];
   const cloud: Cloud = {
     async specifications(id) {
-      if (id === 'pump') return { functions: [{ code: 'switch', type: 'Boolean', values: '{}' }], status: [{ code: 'switch', type: 'Boolean', values: '{}' }] };
       return { functions: [
       { code: 'percent_control', type: 'Integer', values: '{"min":0,"max":100,"step":1}' },
       { code: 'control', type: 'Enum', values: '{"range":["open","close","stop"]}' }
     ], status: [{ code: 'percent_state', type: 'Integer', values: '{}' }] }; },
     async device(id) {
-      if (id === 'pump') return { id, name: 'Pump', online: true, status: [{ code: 'switch', value: false }] };
+      if (id === 'bedroom') return { id, name: 'Bedroom blinds', online: true, status: [{ code: 'percent_state', value: 50 }] };
       return { id: 'blind', name: 'Blinds', online, status: [
         { code: 'percent_state', value: current },
         { code: 'percent_control', value: 0 } // A stale command echo, not the stopped position.
@@ -45,12 +44,12 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   };
   const config = configSchema.parse({ mqttUrl: url, mqttProtocolVersion: 4,
     tuyaCloud: { region: 'us', accessId: 'test', accessSecret: 'test' },
-    devices: [{ id: 'blind', topic: 'living-room', name: 'Blinds' }, { type: 'wateringPump', id: 'pump', topic: 'plant-pump', name: 'Pump' }] });
+    devices: [{ id: 'blind', topic: 'living-room', name: 'Blinds' }, { type: 'blind', id: 'bedroom', topic: 'bedroom', name: 'Bedroom blinds' }] });
   const bridge = new TuyaBridge(config, cloud, () => {});
   t.after(async () => { await bridge.stop(); await mqtt.endAsync(true); await new Promise<void>(r => broker.close(r)); await new Promise<void>(r => server.close(() => r())); });
   bridge.start();
   await until(() => messages.get('tuya/living-room/position') === '10');
-  await until(() => messages.get('tuya/plant-pump/on') === 'false');
+  await until(() => messages.get('tuya/bedroom/position') === '50');
   assert.equal(messages.get('tuya/living-room/target'), '10', 'Idle target must match measured position rather than an old command echo');
   assert.equal(messages.get('tuya/living-room/position_state'), 'STOPPED');
   assert.equal(commands.length, 0, 'Retained command must not move a blind');
@@ -58,7 +57,7 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   await until(() => messages.get('tuya/living-room/target') === '75');
   assert.deepEqual(commands[0], { code: 'percent_control', value: 75 });
   assert.equal(messages.get('tuya/living-room/position'), '10', 'Accepted target is not current position');
-  assert.equal(messages.get('tuya/plant-pump/on'), 'false', 'Blind commands must not alter the pump');
+  assert.equal(messages.get('tuya/bedroom/position'), '50', 'Commands for one blind must not alter another');
   current = 25;
   await until(() => messages.get('tuya/living-room/position') === '25', 2500);
   assert.equal(messages.get('tuya/living-room/target'), '75', 'One-second tracking preserves the pending target');
@@ -88,7 +87,7 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   await mqtt.publishAsync('tuya/living-room/command/set', 'CLOSE');
   await until(() => messages.get('tuya/living-room/availability') === 'offline');
   assert.equal(JSON.parse(messages.get('tuya/status')!).devices.blind, false);
-  assert.equal(JSON.parse(messages.get('tuya/status')!).devices.pump, true, 'Availability is isolated per device type');
+  assert.equal(JSON.parse(messages.get('tuya/status')!).devices.bedroom, true, 'Availability is isolated per blind');
   await bridge.stop();
   await until(() => JSON.parse(messages.get('tuya/status')!).online === false);
 });

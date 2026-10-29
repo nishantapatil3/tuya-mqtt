@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { configSchema, blindSchema } from '../src/config.js';
 import { signature, TuyaCloud } from '../src/cloud.js';
-import { toHome, toTuya, observed, validateMapping, mqttthing } from '../src/blind.js';
+import { toHome, toTuya, observed, validateMapping, mqttthing, suggestDevice } from '../src/blind.js';
 import { readFile } from 'node:fs/promises';
 import { isLocalHost } from '../src/web-access.js';
 
@@ -23,6 +23,31 @@ test('configuration rejects collisions, wildcard topics, invalid URLs and zero p
   assert.throws(() => configSchema.parse({ ...sample, devices: [sample.devices[0], sample.devices[0]] }));
   assert.throws(() => configSchema.parse({ ...sample, topicPrefix: 'tuya/+' }));
   assert.throws(() => configSchema.parse({ ...sample, mqttUrl: 'https://broker' }));
+});
+test('configuration accepts legacy and explicit blinds and rejects unsupported device types', () => {
+  for (const type of [undefined, 'blind']) {
+    const config = configSchema.parse({ ...sample, devices: [{ id: 'blind', name: 'Blind', type }] });
+    assert.equal(config.devices[0]?.type, 'blind');
+    assert.equal(mqttthing(config)[0]?.type, 'windowCovering');
+  }
+  for (const type of ['wateringPump', 'unknown']) {
+    assert.throws(() => configSchema.parse({ ...sample, devices: [{ id: 'device', name: 'Device', type }] }));
+  }
+});
+test('discovery suggests only supported window blinds with valid mappings', () => {
+  const spec = { functions: [
+    { code: 'percent_control', type: 'Integer', values: '{"min":0,"max":100,"step":1}' },
+    { code: 'control', type: 'Enum', values: '{"range":["open","close","stop"]}' }
+  ], status: [{ code: 'percent_state', type: 'Integer', values: '{}' }] };
+  const device = { id: 'device', name: 'Device', online: true, status: [] };
+  for (const category of ['cl', 'clkg']) {
+    assert.equal(suggestDevice({ ...device, category }, spec)?.type, 'blind');
+    assert.equal(suggestDevice({ ...device, category }, { ...spec, status: [] }), undefined);
+  }
+  const switchSpec = { functions: [{ code: 'switch', type: 'Boolean', values: '{}' }],
+    status: [{ code: 'switch', type: 'Boolean', values: '{}' }] };
+  assert.equal(suggestDevice({ ...device, category: 'ggq' }, switchSpec), undefined);
+  assert.equal(suggestDevice({ ...device, category: 'ggq' }, spec), undefined);
 });
 test('percentage conversion supports inversion, strings and nonstandard ranges', () => {
   assert.equal(toHome(25, blind), 25);

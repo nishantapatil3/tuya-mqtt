@@ -9,7 +9,6 @@ Apple Home ↔ Homebridge mqttthing ↔ MQTT broker ↔ tuya-mqtt ↔ Tuya Cloud
 ## Supported devices
 
 - **Window blinds** — open, close, stop, and percentage positioning with real position feedback.
-- **Watering pumps** — on/off control, reported state, and timed watering through Homebridge.
 
 Uses Tuya Cloud polling; an internet connection is required.
 

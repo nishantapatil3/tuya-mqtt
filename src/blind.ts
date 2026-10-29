@@ -1,9 +1,8 @@
 import { blindSchema, type BlindConfig, type Config, type DeviceConfig } from './config.js';
 import type { Datapoint, Specification, Device } from './cloud.js';
-import { suggestPump } from './watering-pump.js';
 
 export function suggestDevice(device: Device, spec: Specification): DeviceConfig | undefined {
-  return suggestBlind(device, spec) ?? suggestPump(device, spec);
+  return suggestBlind(device, spec);
 }
 
 export function suggestBlind(device: Device, spec: Specification): BlindConfig | undefined {
@@ -69,21 +68,13 @@ export function mqttthing(config: Config) {
   return config.devices.map(device => {
     const base = baseTopic(config, device);
     return {
-      accessory: 'mqttthing', type: device.type === 'wateringPump' ? 'valve' : 'windowCovering', name: device.name, url: broker.toString(),
-      ...(device.type === 'wateringPump' ? {
-        valveType: 'sprinkler', durationTimer: true, minDuration: 1, maxDuration: 3600,
-        onValue: 'true', offValue: 'false'
-      } : {}),
+      accessory: 'mqttthing', type: 'windowCovering', name: device.name, url: broker.toString(),
       ...(new URL(config.mqttUrl).username ? { username: 'YOUR_MQTT_USERNAME', password: 'YOUR_MQTT_PASSWORD' } : {}),
       onlineValue: 'online', offlineValue: 'offline',
       topics: {
-        ...(device.type === 'wateringPump' ? {
-          getActive: `${base}/on`, setActive: `${base}/on/set`, getInUse: `${base}/on`
-        } : {
         getCurrentPosition: `${base}/position`, getTargetPosition: `${base}/target`,
         setTargetPosition: `${base}/target/set`, getPositionState: `${base}/position_state`,
         setHoldPosition: `${base}/hold/set`,
-        }),
         getOnline: {
           topic: `${config.topicPrefix}/status`,
           apply: `const s = JSON.parse(message); return s.online && s.devices[${JSON.stringify(device.id)}] ? 'online' : 'offline';`

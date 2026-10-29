@@ -24,15 +24,7 @@ export const blindSchema = z.object({
   openingValue: z.string().default('opening'), closingValue: z.string().default('closing'),
   stoppedValue: z.string().default('stopped')
 }).refine(d => d.positionMax > d.positionMin, 'positionMax must exceed positionMin');
-export const wateringPumpSchema = z.object({
-  type: z.literal('wateringPump'),
-  id: segment, name: z.string().min(1), topic: segment.optional(),
-  switchCode: code.default('switch')
-});
-export const deviceSchema = z.preprocess(value => {
-  if (value && typeof value === 'object' && !('type' in value)) return { ...value, type: 'blind' };
-  return value;
-}, z.discriminatedUnion('type', [blindSchema, wateringPumpSchema]));
+export const deviceSchema = blindSchema;
 export const configSchema = z.object({
   mqttUrl: z.string().refine(value => {
     try { const u = new URL(value); return ['mqtt:', 'mqtts:'].includes(u.protocol) && !!u.hostname; } catch { return false; }
@@ -54,7 +46,6 @@ export const configSchema = z.object({
 });
 export type Config = z.infer<typeof configSchema>;
 export type BlindConfig = z.infer<typeof blindSchema>;
-export type WateringPumpConfig = z.infer<typeof wateringPumpSchema>;
 export type DeviceConfig = z.infer<typeof deviceSchema>;
 export type CloudConfig = z.infer<typeof cloudSchema>;
 export async function loadConfig(path: string): Promise<Config> {

@@ -43,7 +43,7 @@ docker compose down
 
 1. Leave **User Code + QR code** selected, enter your app's User Code, and select **Generate QR code**.
 2. In Smart Life or Tuya Smart tap **+ → Scan**, scan the displayed code and approve. Setup detects approval automatically; **I've approved it — connect** can also check immediately. The bridge lists devices and selects recognized compatible devices. This does not move them. On later visits, the saved session automatically loads the device list; **Discover devices** refreshes it.
-3. Enter your MQTT broker URL, review the selected devices, and save. If your blind is not recognized, inspect the returned capabilities and adjust mappings in the configuration file; `cl`/`clkg` blinds and `ggq` watering pumps with compatible schemas receive automatic suggestions. Verify percentage direction with one blind before configuring the rest.
+3. Enter your MQTT broker URL, review the selected devices, and save. If your blind is not recognized, inspect the returned capabilities and adjust mappings in the configuration file; `cl`/`clkg` blinds with compatible schemas receive automatic suggestions. Verify percentage direction with one blind before configuring the rest.
 4. Refresh status. A blind becomes online after its mappings validate and its first position read succeeds.
 5. Copy the generated mqttthing accessory objects into Homebridge's `accessories` array and restart Homebridge. Replace MQTT credential placeholders if present. The broker address must be reachable from Homebridge too.
 

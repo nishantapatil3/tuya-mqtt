@@ -1,9 +1,9 @@
 {
   "name": "tuya-mqtt",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
-  "description": "Tuya Cloud devices to MQTT and Homebridge mqttthing",
+  "description": "Tuya Cloud window blinds to MQTT and Homebridge mqttthing",
   "engines": {
     "node": ">=22"
   },

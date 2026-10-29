@@ -2,7 +2,6 @@ import { connect, type MqttClient } from 'mqtt';
 import { TuyaCloud, type Device, type Specification } from './cloud.js';
 import type { Config, DeviceConfig } from './config.js';
 import { baseTopic, observed, toTuya, validateMapping } from './blind.js';
-import { pumpState, pumpCommand, validatePump } from './watering-pump.js';
 import { createLogger } from './logger.js';
 
 export interface Cloud {
@@ -11,7 +10,7 @@ export interface Cloud {
   command(id: string, code: string, value: unknown): Promise<void>;
 }
 type Runtime = {
-  config: DeviceConfig; online: boolean; current?: number; target?: number; on?: boolean; pendingOn?: boolean;
+  config: DeviceConfig; online: boolean; current?: number; target?: number;
   movingUntil: number; fastPollUntil: number; failures: number; validated: boolean; timer?: NodeJS.Timeout;
   queue: Promise<void>; queued: number; pendingStop?: boolean;
 };
@@ -29,7 +28,7 @@ export class TuyaBridge {
   get status() {
     return { connected: this.client?.connected ?? false, devices: this.states.map(s => ({
       id: s.config.id, name: s.config.name, type: s.config.type, online: s.online,
-      ...(s.config.type === 'wateringPump' ? { on: s.on } : { current: s.current, target: s.target })
+      current: s.current, target: s.target
     })) };
   }
   start() {
@@ -71,7 +70,7 @@ export class TuyaBridge {
     this.logger.info('mqtt.connected');
     // Retain-as-published also rejects retained live commands under MQTT 5.
     await this.client!.subscribeAsync(Object.fromEntries(this.states.flatMap(s =>
-      (s.config.type === 'wateringPump' ? ['on/set'] : ['target/set', 'hold/set', 'command/set']).map(suffix => [`${baseTopic(this.config, s.config)}/${suffix}`, { qos: 1, rap: true }]))));
+      ['target/set', 'hold/set', 'command/set'].map(suffix => [`${baseTopic(this.config, s.config)}/${suffix}`, { qos: 1, rap: true }]))));
     if (this.stopped) return;
     for (const state of this.states) {
       state.online = false;
@@ -110,57 +109,45 @@ export class TuyaBridge {
   private async refresh(state: Runtime) {
     const generation = this.generation;
     const started = Date.now();
-    const before = JSON.stringify({ online: state.online, current: state.current, target: state.target, on: state.on });
+    const before = JSON.stringify({ online: state.online, current: state.current, target: state.target });
     this.logger.debug('poll.start', { deviceId: state.config.id });
     clearTimeout(state.timer);
     const c = state.config, base = baseTopic(this.config, c);
     try {
       if (!state.validated) {
         const spec = await this.cloud.specifications(c.id);
-        if (c.type === 'wateringPump') validatePump(c, spec);
-        else validateMapping(c, spec);
+        validateMapping(c, spec);
         state.validated = true;
         this.logger.info('device.validated', { deviceId: c.id, type: c.type });
       }
       if (this.stopped || generation !== this.generation) return;
       const device = await this.cloud.device(c.id);
       if (this.stopped || generation !== this.generation) return;
-      if (c.type === 'wateringPump') {
-        const on = pumpState(device.status ?? [], c);
-        state.online = device.online === true && on !== undefined;
-        state.failures = 0;
-        if (state.online) {
-          state.on = on;
-          if (on === state.pendingOn) { state.pendingOn = undefined; state.movingUntil = 0; }
-          this.publish(`${base}/on`, String(on));
+      const reading = observed(device.status ?? [], c, state.current);
+      state.online = device.online === true && reading.current !== undefined;
+      state.failures = 0;
+      if (state.online) {
+        state.current = reading.current;
+        if (state.pendingStop) {
+          state.target = reading.current; state.pendingStop = false; state.movingUntil = 0;
         }
-      } else {
-        const reading = observed(device.status ?? [], c, state.current);
-        state.online = device.online === true && reading.current !== undefined;
-        state.failures = 0;
-        if (state.online) {
-          state.current = reading.current;
-          if (state.pendingStop) {
-            state.target = reading.current; state.pendingStop = false; state.movingUntil = 0;
-          }
-          // A target DP can be a command echo. While a command is pending, keep the accepted target.
-          // An idle device's target DP may still contain an old percentage command,
-          // including after an open/close command from the app or remote.
-          else if (Date.now() >= state.movingUntil)
-            state.target = reading.state === 'STOPPED' ? reading.current : reading.target ?? reading.current;
-          const reached = Date.now() < state.movingUntil && state.current === state.target;
-          if (reached) state.movingUntil = 0;
-          this.publish(`${base}/position`, String(state.current));
-          if (state.target !== undefined) this.publish(`${base}/target`, String(state.target));
-          this.publish(`${base}/position_state`, reached ? 'STOPPED' : reading.state ?? 'STOPPED');
-        }
+        // A target DP can be a command echo. While a command is pending, keep the accepted target.
+        // An idle device's target DP may still contain an old percentage command,
+        // including after an open/close command from the app or remote.
+        else if (Date.now() >= state.movingUntil)
+          state.target = reading.state === 'STOPPED' ? reading.current : reading.target ?? reading.current;
+        const reached = Date.now() < state.movingUntil && state.current === state.target;
+        if (reached) state.movingUntil = 0;
+        this.publish(`${base}/position`, String(state.current));
+        if (state.target !== undefined) this.publish(`${base}/target`, String(state.target));
+        this.publish(`${base}/position_state`, reached ? 'STOPPED' : reading.state ?? 'STOPPED');
       }
     } catch (error) {
       if (this.stopped || generation !== this.generation) return;
       state.online = false; state.failures++;
       this.logger.warn(`Refresh failed for ${c.id}: ${safeError(error)}`);
     }
-    const after = { online: state.online, current: state.current, target: state.target, on: state.on };
+    const after = { online: state.online, current: state.current, target: state.target };
     if (before !== JSON.stringify(after)) this.logger.info('device.state_changed', { deviceId: c.id, ...after });
     this.logger.debug('poll.complete', { deviceId: c.id, elapsedMs: Date.now() - started, online: state.online });
     this.publish(`${base}/availability`, state.online ? 'online' : 'offline');
@@ -171,18 +158,6 @@ export class TuyaBridge {
     const generation = this.generation;
     const base = baseTopic(this.config, state.config), c = state.config;
     if (!state.validated || !state.online) throw new Error('Device unavailable; wait for a successful refresh');
-    if (c.type === 'wateringPump') {
-      if (topic !== `${base}/on/set`) return;
-      const on = pumpCommand(payload);
-      this.logger.info('command.send', { deviceId: c.id, code: c.switchCode, value: on });
-      await this.cloud.command(c.id, c.switchCode, on);
-      this.logger.info('command.accepted', { deviceId: c.id, code: c.switchCode });
-      if (this.stopped || generation !== this.generation) return;
-      state.pendingOn = on;
-      state.movingUntil = Date.now() + this.config.motionTimeoutSeconds * 1000;
-      await this.refresh(state);
-      return;
-    }
     let code: string, value: unknown, target: number | undefined;
     if (topic === `${base}/target/set`) {
       if (!/^(?:\d|[1-9]\d|100)$/.test(payload)) throw new Error('Expected an integer position from 0 to 100');
