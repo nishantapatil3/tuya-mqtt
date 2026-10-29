@@ -144,7 +144,10 @@ export class TuyaBridge {
             state.target = reading.current; state.pendingStop = false; state.movingUntil = 0;
           }
           // A target DP can be a command echo. While a command is pending, keep the accepted target.
-          else if (Date.now() >= state.movingUntil) state.target = reading.target ?? reading.current;
+          // An idle device's target DP may still contain an old percentage command,
+          // including after an open/close command from the app or remote.
+          else if (Date.now() >= state.movingUntil)
+            state.target = reading.state === 'STOPPED' ? reading.current : reading.target ?? reading.current;
           const reached = Date.now() < state.movingUntil && state.current === state.target;
           if (reached) state.movingUntil = 0;
           this.publish(`${base}/position`, String(state.current));

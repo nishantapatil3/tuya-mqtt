@@ -36,7 +36,10 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
     ], status: [{ code: 'percent_state', type: 'Integer', values: '{}' }] }; },
     async device(id) {
       if (id === 'pump') return { id, name: 'Pump', online: true, status: [{ code: 'switch', value: false }] };
-      return { id: 'blind', name: 'Blinds', online, status: [{ code: 'percent_state', value: current }] };
+      return { id: 'blind', name: 'Blinds', online, status: [
+        { code: 'percent_state', value: current },
+        { code: 'percent_control', value: 0 } // A stale command echo, not the stopped position.
+      ] };
     },
     async command(id, code, value) { commands.push({ code, value }); if (fail) throw new Error('Cloud command failed'); }
   };
@@ -48,6 +51,8 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   bridge.start();
   await until(() => messages.get('tuya/living-room/position') === '10');
   await until(() => messages.get('tuya/plant-pump/on') === 'false');
+  assert.equal(messages.get('tuya/living-room/target'), '10', 'Idle target must match measured position rather than an old command echo');
+  assert.equal(messages.get('tuya/living-room/position_state'), 'STOPPED');
   assert.equal(commands.length, 0, 'Retained command must not move a blind');
   await mqtt.publishAsync('tuya/living-room/target/set', '75', { qos: 1 });
   await until(() => messages.get('tuya/living-room/target') === '75');
@@ -73,6 +78,8 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   broker.clients['tuya-mqtt']!.conn.destroy();
   await until(() => JSON.parse(messages.get('tuya/status')!).online === false);
   await until(() => JSON.parse(messages.get('tuya/status')!).online === true, 8000);
+  await until(() => messages.get('tuya/living-room/availability') === 'online');
+  assert.equal(messages.get('tuya/living-room/target'), '40', 'Reconnect must not restore a stale target for a stopped blind');
   assert.equal(commands.length, beforeReconnect, 'Reconnect must not replay retained commands');
   online = false;
   await mqtt.publishAsync('tuya/living-room/command/set', 'CLOSE');

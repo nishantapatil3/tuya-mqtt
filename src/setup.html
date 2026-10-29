@@ -3,9 +3,15 @@
 <title>Tuya MQTT · Devices</title>
 <style>
 body{font:16px system-ui;background:#f3f5f4;color:#19342d;margin:0}main{max-width:850px;margin:48px auto;padding:24px}h1{font-size:36px;margin-bottom:8px}p{line-height:1.6}section{background:white;padding:24px;border-radius:16px;margin:24px 0}label{display:block;margin:16px 0 6px}input,select,textarea{box-sizing:border-box;width:100%;padding:10px;border:1px solid #b9c8c2;border-radius:6px;font:inherit}textarea,pre{font:13px ui-monospace,monospace}button{background:#165b48;color:white;border:0;border-radius:8px;padding:12px 18px;margin:16px 8px 0 0;cursor:pointer}button:disabled{opacity:.5}pre{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#52665e}#notice{white-space:pre-wrap}a{color:#165b48}
+.stages{list-style:none;padding:0;margin:0}.stage{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #edf1ef}.stage:last-child{border:0}.stage-icon{display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%;background:#eef1ef;color:#52665e;font-weight:700}.stage.ready .stage-icon{background:#dff3e7;color:#16743d}.stage small{display:block;margin-top:3px}.device-status{border:1px solid #dce6e0;border-radius:10px;padding:14px;margin-top:12px}.device-status p{margin:6px 0 0}.status-error{color:#a42b25}#statusUpdated{display:block;margin-top:12px}
 </style>
 <main><small>TUYA CLOUD → MQTT → HOMEBRIDGE</small><h1>Your devices, connected.</h1>
 <p>Connect your Smart Life or Tuya Smart account, choose your devices, then connect MQTT.</p>
+<section aria-labelledby="connectionHeading"><h2 id="connectionHeading">Connection status</h2>
+<ul id="stages" class="stages" aria-label="Connection stages"><li>Checking connection stages…</li></ul>
+<small id="statusUpdated" role="status" aria-live="polite">Checking status…</small><div id="deviceStatus"></div>
+<button id="status">Refresh status</button>
+<details><summary>Raw bridge status (advanced)</summary><pre id="state"></pre></details></section>
 <section><h2>Supported devices</h2><ul><li><strong>Window blinds</strong> — open, close, stop and percentage positioning. Position 0 means closed; 100 means open.</li><li><strong>Watering pumps</strong> — on/off control with reported switch state. The generated Homebridge sprinkler valve supports run duration settings.</li></ul></section>
 <section><h2>1. Connect your account</h2>
 <label for="mode">Connection method</label><select id="mode"><option value="sharing">User Code + QR code (recommended)</option><option value="cloud">Developer cloud project (advanced)</option></select>
@@ -29,7 +35,7 @@ body{font:16px system-ui;background:#f3f5f4;color:#19342d;margin:0}main{max-widt
 <button id="save">Save and start bridge</button></section>
 <p id="notice" role="status" aria-live="polite"></p>
 <section><h2>3. Homebridge mqttthing</h2><p>Copy these accessories into Homebridge. If your broker uses a password, replace the credential placeholders.</p><button id="export">Refresh configuration</button><pre id="exported"></pre></section>
-<section><h2>Bridge status</h2><button id="status">Refresh status</button><pre id="state"></pre></section>
+
 <p><small>This setup page has no login. Keep it on your computer or a trusted home network. Configuration and secrets are stored in the data folder.</small></p></main>
 <script>
 const token='__CSRF__';
@@ -37,7 +43,42 @@ const el=id=>document.getElementById(id);
 let qrId, qrTimer, qrExpires=0, checking=false, candidates=[], selectedDevices=[];
 el('mode').onchange=()=>{el('sharingFields').hidden=el('mode').value!=='sharing';el('cloudFields').hidden=el('mode').value!=='cloud'};
 function cloud(){return {region:el('region').value,accessId:el('accessId').value.trim(),accessSecret:el('accessSecret').value,...(el('uid').value.trim()?{uid:el('uid').value.trim()}:{})}}
-async function api(path,body){console.debug('[tuya-mqtt] Request',path);const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-setup-token':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await r.json();if(!r.ok){console.warn('[tuya-mqtt] Request failed',path,r.status);throw new Error(result.error)}console.debug('[tuya-mqtt] Request complete',path,r.status);return result}
+async function api(path,body){console.debug('[tuya-mqtt] Request',path);const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',...(path==='status'?{signal:AbortSignal.timeout(10000)}:{}),headers:{'content-type':'application/json','x-setup-token':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await r.json();if(!r.ok){console.warn('[tuya-mqtt] Request failed',path,r.status);throw new Error(result.error)}console.debug('[tuya-mqtt] Request complete',path,r.status);return result}
+function renderStage(ready,title,detail){
+ const row=document.createElement('li');row.className='stage'+(ready?' ready':'');
+ const icon=document.createElement('span');icon.className='stage-icon';icon.textContent=ready?'✓':'○';icon.setAttribute('aria-hidden','true');
+ const text=document.createElement('div'),heading=document.createElement('strong'),description=document.createElement('small');
+ heading.textContent=title+' — '+(ready?'Ready':'Pending');description.textContent=detail;text.append(heading,description);row.append(icon,text);return row;
+}
+function renderStatus(s){
+ const devices=s.devices||[],configured=devices.length>0,online=devices.filter(d=>d.online).length;
+ el('stages').replaceChildren(
+  renderStage(true,'Setup page','The bridge is reachable.'),
+  renderStage(s.sharingLinked||online>0,'Tuya account',s.sharingLinked?'QR session saved.':online>0?'Cloud access verified by device readings.':'Connect your account to continue.'),
+  renderStage(configured,'Bridge configuration',configured?devices.length+' device(s) configured.':'Choose devices and save your configuration.'),
+  renderStage(s.connected,'MQTT broker',s.connected?'Connected to your broker.':'Waiting for a broker connection.'),
+  renderStage(configured&&online===devices.length,'Device readings',configured?online+' of '+devices.length+' device(s) online.':'Waiting for configured devices.'),
+  renderStage(configured,'Homebridge configuration',configured?'Ready to export below. Apple Home connectivity is not checked here.':'Save your configuration to generate the export.')
+ );
+ el('deviceStatus').replaceChildren(...devices.map(d=>{
+  const card=document.createElement('div');card.className='device-status';
+  const title=document.createElement('strong');title.textContent=d.name+' · '+(d.online?'Online':'Offline');
+  const detail=document.createElement('p');detail.textContent=!d.online?'Waiting for a successful device reading.':d.type==='wateringPump'?'Pump: '+(d.on===true?'On':d.on===false?'Off':'Unknown'):
+   'Current: '+(d.current??'Unknown')+'% · Target: '+(d.target??'Unknown')+'%';
+  card.append(title,detail);return card;
+ }));
+ el('state').textContent=JSON.stringify(s,null,2);
+ el('statusUpdated').className='';el('statusUpdated').textContent='Updated '+new Date().toLocaleTimeString()+'. View refreshes every 5 seconds; device readings follow the bridge polling interval.';
+}
+let statusRequest;
+function refreshStatus(){
+ if(statusRequest)return statusRequest;
+ statusRequest=api('status').then(s=>{renderStatus(s);return s}).catch(error=>{
+  el('stages').replaceChildren(renderStage(false,'Bridge connection','Could not refresh status. Previous readings may be out of date.'));
+  el('deviceStatus').replaceChildren();el('statusUpdated').className='status-error';el('statusUpdated').textContent=error.message;throw error;
+ }).finally(()=>{statusRequest=undefined});return statusRequest;
+}
+async function watchStatus(){try{if(!document.hidden)await refreshStatus()}catch{}finally{setTimeout(watchStatus,5000)}}
 function action(id,fn){el(id).onclick=async()=>{el(id).disabled=true;el('notice').textContent='Working…';try{const message=await fn();el('notice').textContent=message||'Done.'}catch(e){el('notice').textContent=e.message}finally{el(id).disabled=false}}}
 action('qrStart',async()=>{clearTimeout(qrTimer);el('qrPanel').hidden=true;qrId=undefined;el('qrNotice').textContent='Contacting Tuya… A slow connection will retry once.';try{const qr=await api('qr/start',{userCode:el('userCode').value.trim()});qrId=qr.id;qrExpires=qr.expiresAt;el('qrImage').src=qr.image;el('qrPanel').hidden=false;el('qrNotice').textContent='Scan and approve within three minutes.';scheduleApproval();return 'QR code ready. Approval will be detected automatically.'}catch(error){el('qrNotice').textContent=error.message;throw error}});
 async function inspect(){const devices=await api('inspect',{authMode:el('mode').value,...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),ids:el('ids').value.split(',').map(s=>s.trim()).filter(Boolean)});el('discovered').textContent=JSON.stringify(devices,null,2);candidates=devices.filter(d=>d.suggestedMapping).map(d=>d.suggestedMapping);el('choices').replaceChildren();const checks=[];function update(){selectedDevices=candidates.filter((_,i)=>checks[i].checked)}candidates.forEach((d,i)=>{const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.style.width='auto';check.checked=true;check.onchange=update;checks.push(check);label.append(check,document.createTextNode(' '+d.name));el('choices').append(label)});update();return candidates.length+' compatible device(s) found. Review your selection before saving.'}
@@ -47,7 +88,7 @@ async function checkApproval(){
  try{const result=await api('qr/check',{id});if(id!==qrId||!result.linked)return false;
  clearTimeout(qrTimer);qrId=undefined;el('qrPanel').hidden=true;el('qrNotice').textContent='Account connected. Your session is saved.';
  try{el('notice').textContent=await inspect()}catch(error){el('notice').textContent='Account connected, but device listing failed: '+error.message}
- el('state').textContent=JSON.stringify(await api('status'),null,2);return true;
+ await refreshStatus();return true;
  }finally{checking=false}
 }
 function scheduleApproval(){clearTimeout(qrTimer);if(!qrId)return;qrTimer=setTimeout(async()=>{
@@ -57,8 +98,9 @@ function scheduleApproval(){clearTimeout(qrTimer);if(!qrId)return;qrTimer=setTim
  },2500)}
 action('qrCheck',async()=>{if(!qrId)throw new Error('Generate a QR code first, or use the saved session.');const linked=await checkApproval();return linked?el('notice').textContent:'Not approved yet. Scan the code and confirm in the app.'});
 action('inspect',inspect);
-action('save',async()=>{await api('configure',{authMode:el('mode').value,mqttUrl:el('mqtt').value,topicPrefix:el('prefix').value,pollIntervalSeconds:Number(el('interval').value),...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),devices:selectedDevices});el('exported').textContent=JSON.stringify(await api('mqttthing'),null,2);el('state').textContent=JSON.stringify(await api('status'),null,2)});
+action('save',async()=>{await api('configure',{authMode:el('mode').value,mqttUrl:el('mqtt').value,topicPrefix:el('prefix').value,pollIntervalSeconds:Number(el('interval').value),...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),devices:selectedDevices});el('exported').textContent=JSON.stringify(await api('mqttthing'),null,2);await refreshStatus()});
 action('export',async()=>{el('exported').textContent=JSON.stringify(await api('mqttthing'),null,2)});
-action('status',async()=>{el('state').textContent=JSON.stringify(await api('status'),null,2)});
-api('status').then(async s=>{el('state').textContent=JSON.stringify(s,null,2);if(s.sharingLinked){el('qrNotice').textContent='Account connected. Your saved session is ready.';try{el('notice').textContent=await inspect()}catch(error){el('notice').textContent='Account connected, but device listing failed: '+error.message}}}).catch(()=>{});
+action('status',async()=>{await refreshStatus()});
+refreshStatus().then(async s=>{if(s.sharingLinked){el('qrNotice').textContent='Account connected. Your saved session is ready.';try{el('notice').textContent=await inspect()}catch(error){el('notice').textContent='Account connected, but device listing failed: '+error.message}}}).catch(()=>{});
+setTimeout(watchStatus,5000);
 </script></html>

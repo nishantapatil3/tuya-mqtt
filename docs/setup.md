@@ -66,6 +66,12 @@ docker compose restart
 
 Only copy files that exist; developer-project setups do not need `sharing-session.json`. These steps replace files in the container volume, so use them only to import the intended saved configuration. In the imported config, replace a broker address of `localhost` or `127.0.0.1` with `host.docker.internal` if that broker runs on the Docker host.
 
+### Live connection status
+
+The setup page shows green checks for the setup connection, saved QR session or verified cloud access, saved device configuration, MQTT connection, device readings, and Homebridge export availability. Pending stages explain what is still needed. Homebridge export availability does not verify Apple Home connectivity.
+
+The checklist and device positions refresh every five seconds while the page is visible. This reads the bridge's latest state without adding Tuya cloud polls; actual device readings follow the configured polling interval. If the bridge cannot be reached, the checks are replaced with a connection warning. Raw JSON remains available under **Raw bridge status (advanced)**.
+
 ## Start with Node.js
 
 Use Node.js 22 or later:
