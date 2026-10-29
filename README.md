@@ -30,6 +30,22 @@ docker compose up -d --build
 
 For a broker on the Docker host, use `mqtt://host.docker.internal:1883`. Your settings and login persist in a Docker volume. Keep the setup page on a trusted network.
 
+## Container releases
+
+The publishing workflow builds the existing Dockerfile for `linux/amd64` and
+`linux/arm64` after the application checks pass. Images are published to
+`ghcr.io/nishantapatil3/tuya-mqtt` using the workflow's `GITHUB_TOKEN`; no
+additional registry secret is required.
+
+- Pushes to `main` publish the `main` tag.
+- Version tags such as `v1.2.3` publish `1.2.3`, `1.2`, and `latest`.
+- Prerelease tags such as `v1.2.3-beta.1` publish `1.2.3-beta.1` without moving `latest`.
+- Every build also publishes a `sha-<short-commit>` tag.
+
+Pull a released image with `docker pull ghcr.io/nishantapatil3/tuya-mqtt:1.2.3`
+(replace `1.2.3` with an existing release). Registry access follows the package's
+visibility settings in GitHub Packages.
+
 ## Documentation
 
 - [Setup](docs/setup.md) — QR login, Docker, Node.js, migration, and connection troubleshooting.
