@@ -12,7 +12,7 @@ export interface Cloud {
 }
 type Runtime = {
   config: DeviceConfig; online: boolean; current?: number; target?: number; on?: boolean; pendingOn?: boolean;
-  movingUntil: number; failures: number; validated: boolean; timer?: NodeJS.Timeout;
+  movingUntil: number; fastPollUntil: number; failures: number; validated: boolean; timer?: NodeJS.Timeout;
   queue: Promise<void>; queued: number; pendingStop?: boolean;
 };
 export class TuyaBridge {
@@ -24,7 +24,7 @@ export class TuyaBridge {
   constructor(readonly config: Config, private cloud: Cloud = new TuyaCloud(config.tuyaCloud!),
     log?: (message: string) => void) {
     this.logger = createLogger('bridge', log);
-    this.states = config.devices.map(config => ({ config, online: false, movingUntil: 0, failures: 0, validated: false, queue: Promise.resolve(), queued: 0 }));
+    this.states = config.devices.map(config => ({ config, online: false, movingUntil: 0, fastPollUntil: 0, failures: 0, validated: false, queue: Promise.resolve(), queued: 0 }));
   }
   get status() {
     return { connected: this.client?.connected ?? false, devices: this.states.map(s => ({
@@ -104,7 +104,7 @@ export class TuyaBridge {
     clearTimeout(state.timer);
     if (this.stopped) return;
     const seconds = state.failures ? Math.min(900, this.config.pollIntervalSeconds * 2 ** Math.min(state.failures, 4)) :
-      Date.now() < state.movingUntil ? this.config.motionPollSeconds : this.config.pollIntervalSeconds;
+      Date.now() < Math.max(state.movingUntil, state.fastPollUntil) ? this.config.motionPollSeconds : this.config.pollIntervalSeconds;
     state.timer = setTimeout(() => this.enqueue(state, () => this.refresh(state)), seconds * 1000);
   }
   private async refresh(state: Runtime) {
@@ -205,6 +205,9 @@ export class TuyaBridge {
     state.target = target ?? state.current;
     state.pendingStop = target === undefined;
     state.movingUntil = Date.now() + this.config.motionTimeoutSeconds * 1000;
+    // Cloud readings can look complete before the motor settles. Keep polling
+    // frequently for at least 20 seconds after each accepted curtain command.
+    state.fastPollUntil = Date.now() + 20_000;
     if (state.target !== undefined) this.publish(`${base}/target`, String(state.target));
     await this.refresh(state);
   }

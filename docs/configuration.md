@@ -46,9 +46,9 @@ Without `workStateCode`, direction is inferred from successive position readings
 | `mqttProtocolVersion` | `4` | MQTT 3.1.1; set `5` for MQTT 5 brokers |
 | `pollIntervalSeconds` | `60` | Normal interval, minimum 10 seconds |
 | `motionPollSeconds` | `1` | Interval following an accepted command, minimum 1 second |
-| `motionTimeoutSeconds` | `60` | Maximum fast-poll period; adjust for travel time |
+| `motionTimeoutSeconds` | `60` | Motion tracking timeout; adjust for travel time |
 
-Polling runs serially per blind, without overlapping that blind's commands. Fast polling ends once the requested position is observed or the motion period expires. A stop reconciles the target to the next observed position. Timeouts do not cause motor commands to be automatically replayed. Explicit token-rejection errors renew authentication and retry once.
+Polling runs serially per blind, without overlapping that blind's commands. After each accepted blind command, fast polling continues for at least 20 seconds, even if the requested position or a stop is confirmed immediately. Each new command restarts this window. Pending movement continues fast polling until the requested position is observed or the motion timeout expires; then the normal idle interval resumes once the 20-second window has also elapsed. A stop reconciles the target to the next observed position. Timeouts do not cause motor commands to be automatically replayed. Explicit token-rejection errors renew authentication and retry once.
 
 Supported region keys: `us` (Western America), `us-east`, `eu` (Central Europe), `eu-west`, `cn`, `in`, `sg`. See [Tuya's endpoint reference](https://developer.tuya.com/en/docs/iot/api-request?id=Ka4a8uuo1j4t4).
 

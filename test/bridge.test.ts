@@ -92,3 +92,69 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   await bridge.stop();
   await until(() => JSON.parse(messages.get('tuya/status')!).online === false);
 });
+
+for (const command of ['OPEN', 'CLOSE', 'STOP', 'target', 'hold']) {
+  test(`${command}: confirmed commands keep polling for 20 seconds, and another command restarts the window`, async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+    let polls = 0;
+    const cloud: Cloud = {
+      async specifications() { throw new Error('Already validated'); },
+      async device() {
+        polls++;
+        return { id: 'blind', name: 'Blind', online: true, status: [{ code: 'percent_state', value: command === 'CLOSE' ? 0 : 100 }] };
+      },
+      async command() {}
+    };
+    const bridge = new TuyaBridge(configSchema.parse({ mqttUrl: 'mqtt://localhost', authMode: 'sharing',
+      devices: [{ id: 'blind', name: 'Blind' }] }), cloud, () => {});
+    const state = bridge['states'][0]!;
+    state.validated = true; state.online = true; state.current = 100;
+    let pending = Promise.resolve();
+    t.mock.method(bridge, 'enqueue', (_state: unknown, work: () => Promise<void>) => { pending = work(); });
+    const topic = command === 'target' ? 'target/set' : command === 'hold' ? 'hold/set' : 'command/set';
+    const payload = command === 'target' ? '100' : command === 'hold' ? 'true' : command;
+    const send = () => bridge['handle'](state, `tuya/blind/${topic}`, payload);
+    const tick = async () => { t.mock.timers.tick(1000); await pending; };
+    await send();
+    assert.equal(state.movingUntil, 0, 'The first cloud reading confirms completion');
+    for (let second = 1; second <= 10; second++) await tick();
+    assert.equal(polls, 11, 'Read every second after immediate confirmation');
+    await send();
+    for (let second = 1; second <= 20; second++) await tick();
+    assert.equal(polls, 32, 'A new command gets its full 20-second window');
+    for (let second = 1; second < 60; second++) await tick();
+    assert.equal(polls, 32, 'Idle polling waits 60 seconds');
+    await tick();
+    assert.equal(polls, 33);
+    await bridge.stop();
+  });
+}
+
+test('pending movement keeps fast polling beyond the post-command window', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+  let polls = 0;
+  const cloud: Cloud = {
+    async specifications() { throw new Error('Already validated'); },
+    async device() {
+      polls++;
+      return { id: 'blind', name: 'Blind', online: true, status: [{ code: 'percent_state', value: 10 }] };
+    },
+    async command() {}
+  };
+  const bridge = new TuyaBridge(configSchema.parse({ mqttUrl: 'mqtt://localhost', authMode: 'sharing',
+    devices: [{ id: 'blind', name: 'Blind' }] }), cloud, () => {});
+  const state = bridge['states'][0]!;
+  state.validated = true; state.online = true; state.current = 10;
+  let pending = Promise.resolve();
+  t.mock.method(bridge, 'enqueue', (_state: unknown, work: () => Promise<void>) => { pending = work(); });
+  await bridge['handle'](state, 'tuya/blind/command/set', 'OPEN');
+  for (let second = 1; second <= 60; second++) {
+    t.mock.timers.tick(1000); await pending;
+  }
+  assert.equal(polls, 61, 'Track pending movement until the existing motion timeout');
+  t.mock.timers.tick(59_000); await pending;
+  assert.equal(polls, 61);
+  t.mock.timers.tick(1000); await pending;
+  assert.equal(polls, 62, 'Return to idle polling after the motion timeout');
+  await bridge.stop();
+});
