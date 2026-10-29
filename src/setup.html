@@ -24,13 +24,13 @@ body{font:16px system-ui;background:#f3f5f4;color:#19342d;margin:0}main{max-widt
 <label for="region">Data center</label><select id="region"><option value="us">Western America</option><option value="us-east">Eastern America</option><option value="eu">Central Europe</option><option value="eu-west">Western Europe</option><option value="cn">China</option><option value="in">India</option><option value="sg">Singapore</option></select>
 <label for="accessId">Access ID</label><input id="accessId" autocomplete="off">
 <label for="accessSecret">Access secret</label><input id="accessSecret" type="password" autocomplete="off">
-<label for="uid">App account UID (optional, to list devices)</label><input id="uid" autocomplete="off">
-</div><label for="ids">Device IDs (optional; leave blank to list your account)</label><input id="ids" placeholder="Optional device IDs, separated by commas">
-<button id="inspect">Inspect devices</button><p><small>Inspection shows device capabilities without sending control commands. Use the results to check codes and ranges below.</small></p><details><summary>Device details (advanced)</summary><pre id="discovered"></pre></details></section>
+<label for="uid">App account UID (required for device discovery)</label><input id="uid" autocomplete="off" aria-required="true">
+</div>
+<button id="inspect">Discover devices</button><p><small>Devices are discovered automatically from your account. Discovery checks capabilities without sending control commands.</small></p><details><summary>Device details (advanced)</summary><pre id="discovered"></pre></details></section>
 <section><h2>2. MQTT and devices</h2><label for="mqtt">MQTT broker URL</label><input id="mqtt" value="mqtt://localhost:1883" autocomplete="off">
 <label for="prefix">Topic prefix</label><input id="prefix" value="tuya">
 <label for="interval">Normal poll interval, seconds</label><input id="interval" type="number" min="10" value="60">
-<h3>Choose your devices</h3><p>Connect and inspect your account to find compatible devices. Select the devices you want to connect to MQTT.</p><div id="choices"></div>
+<h3>Choose your devices</h3><p>Connect your account to discover compatible devices. Select the devices you want to connect to MQTT.</p><div id="choices"></div>
 <p><small>Saving replaces the current configuration. Your QR session is saved privately and reused after a restart.</small></p>
 <button id="save">Save and start bridge</button></section>
 <p id="notice" role="status" aria-live="polite"></p>
@@ -81,7 +81,7 @@ function refreshStatus(){
 async function watchStatus(){try{if(!document.hidden)await refreshStatus()}catch{}finally{setTimeout(watchStatus,5000)}}
 function action(id,fn){el(id).onclick=async()=>{el(id).disabled=true;el('notice').textContent='Working…';try{const message=await fn();el('notice').textContent=message||'Done.'}catch(e){el('notice').textContent=e.message}finally{el(id).disabled=false}}}
 action('qrStart',async()=>{clearTimeout(qrTimer);el('qrPanel').hidden=true;qrId=undefined;el('qrNotice').textContent='Contacting Tuya… A slow connection will retry once.';try{const qr=await api('qr/start',{userCode:el('userCode').value.trim()});qrId=qr.id;qrExpires=qr.expiresAt;el('qrImage').src=qr.image;el('qrPanel').hidden=false;el('qrNotice').textContent='Scan and approve within three minutes.';scheduleApproval();return 'QR code ready. Approval will be detected automatically.'}catch(error){el('qrNotice').textContent=error.message;throw error}});
-async function inspect(){const devices=await api('inspect',{authMode:el('mode').value,...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{}),ids:el('ids').value.split(',').map(s=>s.trim()).filter(Boolean)});el('discovered').textContent=JSON.stringify(devices,null,2);candidates=devices.filter(d=>d.suggestedMapping).map(d=>d.suggestedMapping);el('choices').replaceChildren();const checks=[];function update(){selectedDevices=candidates.filter((_,i)=>checks[i].checked)}candidates.forEach((d,i)=>{const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.style.width='auto';check.checked=true;check.onchange=update;checks.push(check);label.append(check,document.createTextNode(' '+d.name));el('choices').append(label)});update();return candidates.length+' compatible device(s) found. Review your selection before saving.'}
+async function inspect(){const devices=await api('inspect',{authMode:el('mode').value,...(el('mode').value==='cloud'?{tuyaCloud:cloud()}:{})});el('discovered').textContent=JSON.stringify(devices,null,2);candidates=devices.filter(d=>d.suggestedMapping).map(d=>d.suggestedMapping);el('choices').replaceChildren();const checks=[];function update(){selectedDevices=candidates.filter((_,i)=>checks[i].checked)}candidates.forEach((d,i)=>{const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.style.width='auto';check.checked=true;check.onchange=update;checks.push(check);label.append(check,document.createTextNode(' '+d.name));el('choices').append(label)});update();return candidates.length+' compatible device(s) found. Review your selection before saving.'}
 async function checkApproval(){
  if(!qrId)return false;if(checking)return false;
  checking=true;const id=qrId;

@@ -91,11 +91,10 @@ const server = createServer(async (req, res) => {
     }
     if (req.url === '/api/inspect') {
       const config = body.authMode === 'sharing' ? undefined : cloudSchema.parse(body.tuyaCloud);
+      if (config && !config.uid) return send(res, 400, { error: 'Enter your app account UID to discover devices, or connect using a QR code.' });
       const cloud = body.authMode === 'sharing' ? sharing : new TuyaCloud(config!);
       if (!cloud) throw new Error('QR login expired or was replaced. Generate a new code.');
-      const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
-      if (ids.length > 50 || ids.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id))) throw new Error('Invalid device IDs');
-      const devices = ids.length ? await Promise.all(ids.map(id => cloud.device(id))) : cloud instanceof SharingCloud ? await cloud.devices() : config?.uid ? await cloud.devices(config.uid) : [];
+      const devices = cloud instanceof SharingCloud ? await cloud.devices() : await cloud.devices(config!.uid!);
       const result = [];
       for (const device of devices) {
         // Deliberately omit local keys, location, IP addresses and user identifiers.
