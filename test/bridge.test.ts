@@ -59,6 +59,9 @@ test('real MQTT round trip: retained state, commands, confirmed positions, offli
   assert.deepEqual(commands[0], { code: 'percent_control', value: 75 });
   assert.equal(messages.get('tuya/living-room/position'), '10', 'Accepted target is not current position');
   assert.equal(messages.get('tuya/plant-pump/on'), 'false', 'Blind commands must not alter the pump');
+  current = 25;
+  await until(() => messages.get('tuya/living-room/position') === '25', 2500);
+  assert.equal(messages.get('tuya/living-room/target'), '75', 'One-second tracking preserves the pending target');
   await mqtt.publishAsync('tuya/living-room/target/set', '101');
   await until(() => messages.has('tuya/living-room/error'));
   assert.equal(commands.length, 1);

@@ -41,7 +41,7 @@ export const configSchema = z.object({
   clientId: segment.default('tuya-mqtt'),
   mqttProtocolVersion: z.union([z.literal(4), z.literal(5)]).default(4),
   pollIntervalSeconds: z.number().int().min(10).max(86400).default(60),
-  motionPollSeconds: z.number().int().min(2).max(60).default(5),
+  motionPollSeconds: z.number().int().min(1).max(60).default(1),
   motionTimeoutSeconds: z.number().int().min(5).max(300).default(60),
   authMode: z.enum(['cloud', 'sharing']).default('cloud'),
   tuyaCloud: cloudSchema.optional(),

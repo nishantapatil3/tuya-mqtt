@@ -45,7 +45,7 @@ Without `workStateCode`, direction is inferred from successive position readings
 | `clientId` | `tuya-mqtt` | Must be unique per bridge instance |
 | `mqttProtocolVersion` | `4` | MQTT 3.1.1; set `5` for MQTT 5 brokers |
 | `pollIntervalSeconds` | `60` | Normal interval, minimum 10 seconds |
-| `motionPollSeconds` | `5` | Interval following an accepted command, minimum 2 seconds |
+| `motionPollSeconds` | `1` | Interval following an accepted command, minimum 1 second |
 | `motionTimeoutSeconds` | `60` | Maximum fast-poll period; adjust for travel time |
 
 Polling runs serially per blind, without overlapping that blind's commands. Fast polling ends once the requested position is observed or the motion period expires. A stop reconciles the target to the next observed position. Timeouts do not cause motor commands to be automatically replayed. Explicit token-rejection errors renew authentication and retry once.

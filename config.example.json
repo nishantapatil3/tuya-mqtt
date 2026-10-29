@@ -3,7 +3,7 @@
   "topicPrefix": "tuya",
   "clientId": "tuya-mqtt",
   "pollIntervalSeconds": 60,
-  "motionPollSeconds": 5,
+  "motionPollSeconds": 1,
   "motionTimeoutSeconds": 60,
   "tuyaCloud": {
     "region": "us",

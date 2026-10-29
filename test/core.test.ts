@@ -18,6 +18,8 @@ function reply(result: unknown, success = true, code?: number) { return Response
 
 test('configuration rejects collisions, wildcard topics, invalid URLs and zero polling', () => {
   assert.throws(() => configSchema.parse({ ...sample, pollIntervalSeconds: 0 }));
+  assert.throws(() => configSchema.parse({ ...sample, motionPollSeconds: 0 }));
+  assert.equal(configSchema.parse({ ...sample, motionPollSeconds: undefined }).motionPollSeconds, 1);
   assert.throws(() => configSchema.parse({ ...sample, devices: [sample.devices[0], sample.devices[0]] }));
   assert.throws(() => configSchema.parse({ ...sample, topicPrefix: 'tuya/+' }));
   assert.throws(() => configSchema.parse({ ...sample, mqttUrl: 'https://broker' }));
