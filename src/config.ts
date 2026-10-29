@@ -19,11 +19,16 @@ export const blindSchema = z.object({
   stopValue: z.string().min(1).default('stop'),
   invertPosition: z.boolean().default(false),
   positionMin: z.number().int().default(0), positionMax: z.number().int().default(100),
+  targetMin: z.number().int().optional(), targetMax: z.number().int().optional(),
+  targetStep: z.number().int().positive().default(1),
   targetAsString: z.boolean().default(false),
   workStateCode: code.optional(),
   openingValue: z.string().default('opening'), closingValue: z.string().default('closing'),
   stoppedValue: z.string().default('stopped')
-}).refine(d => d.positionMax > d.positionMin, 'positionMax must exceed positionMin');
+}).refine(d => d.positionMax > d.positionMin, 'positionMax must exceed positionMin')
+  .refine(d => (d.targetMax ?? d.positionMax) > (d.targetMin ?? d.positionMin), 'targetMax must exceed targetMin')
+  .refine(d => ((d.targetMax ?? d.positionMax) - (d.targetMin ?? d.positionMin)) % d.targetStep === 0,
+    'Target range must be divisible by targetStep');
 export const deviceSchema = blindSchema;
 export const configSchema = z.object({
   mqttUrl: z.string().refine(value => {

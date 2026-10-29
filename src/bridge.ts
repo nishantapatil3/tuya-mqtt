@@ -1,7 +1,7 @@
 import { connect, type MqttClient } from 'mqtt';
 import { TuyaCloud, type Device, type Specification } from './cloud.js';
 import type { Config, DeviceConfig } from './config.js';
-import { baseTopic, observed, toTuya, validateMapping } from './blind.js';
+import { baseTopic, observed, targetToHome, toTuya, validateMapping } from './blind.js';
 import { createLogger } from './logger.js';
 
 export interface Cloud {
@@ -12,7 +12,7 @@ export interface Cloud {
 type Runtime = {
   config: DeviceConfig; online: boolean; current?: number; target?: number;
   movingUntil: number; fastPollUntil: number; failures: number; validated: boolean; timer?: NodeJS.Timeout;
-  queue: Promise<void>; queued: number; pendingStop?: boolean;
+  queue: Promise<void>; queued: number; pendingStop?: boolean; motionObserved?: boolean; commandMotionObserved?: boolean; positionState?: string;
 };
 export class TuyaBridge {
   private client?: MqttClient;
@@ -28,7 +28,7 @@ export class TuyaBridge {
   get status() {
     return { connected: this.client?.connected ?? false, devices: this.states.map(s => ({
       id: s.config.id, name: s.config.name, type: s.config.type, online: s.online,
-      current: s.current, target: s.target
+      current: s.current, target: s.target, positionState: s.positionState
     })) };
   }
   start() {
@@ -128,19 +128,38 @@ export class TuyaBridge {
       state.failures = 0;
       if (state.online) {
         state.current = reading.current;
+        const pending = Date.now() < state.movingUntil;
+        const moving = reading.state === 'INCREASING' || reading.state === 'DECREASING';
+        // App/remote movement also needs fast reads once detected. Bound the
+        // window so a stuck motion datapoint cannot cause endless fast polling.
+        if (moving && !state.motionObserved && !pending)
+          state.fastPollUntil = Math.max(state.fastPollUntil, Date.now() + this.config.motionTimeoutSeconds * 1000);
+        state.motionObserved = moving;
+        const explicitlyStopped = !!c.workStateCode && (device.status ?? []).some(d =>
+          d.code === c.workStateCode && d.value === c.stoppedValue);
         if (state.pendingStop) {
-          state.target = reading.current; state.pendingStop = false; state.movingUntil = 0;
+          // A stop acknowledgement can precede the final position report.
+          state.target = reading.current;
+          if (!moving || !pending) { state.pendingStop = false; state.movingUntil = 0; }
+        } else if (pending && state.commandMotionObserved && (explicitlyStopped ||
+            (reading.state === 'STOPPED' && (reading.current === 0 || reading.current === 100)))) {
+          // Physical/app stops and end stops clear an obsolete pending target.
+          state.target = reading.current; state.movingUntil = 0;
+        } else if (!pending) {
+          state.target = reading.current;
+          if (moving) {
+            const ahead = reading.target !== undefined && (reading.state === 'INCREASING'
+              ? reading.target > reading.current! : reading.target < reading.current!);
+            state.target = ahead ? reading.target : reading.state === 'INCREASING' ? 100 : 0;
+          }
         }
-        // A target DP can be a command echo. While a command is pending, keep the accepted target.
-        // An idle device's target DP may still contain an old percentage command,
-        // including after an open/close command from the app or remote.
-        else if (Date.now() >= state.movingUntil)
-          state.target = reading.state === 'STOPPED' ? reading.current : reading.target ?? reading.current;
-        const reached = Date.now() < state.movingUntil && state.current === state.target;
+        if (pending && moving) state.commandMotionObserved = true;
+        const reached = Date.now() < state.movingUntil && state.current === state.target && !state.pendingStop;
         if (reached) state.movingUntil = 0;
+        state.positionState = reached ? 'STOPPED' : reading.state ?? 'STOPPED';
         this.publish(`${base}/position`, String(state.current));
         if (state.target !== undefined) this.publish(`${base}/target`, String(state.target));
-        this.publish(`${base}/position_state`, reached ? 'STOPPED' : reading.state ?? 'STOPPED');
+        this.publish(`${base}/position_state`, state.positionState);
       }
     } catch (error) {
       if (this.stopped || generation !== this.generation) return;
@@ -161,7 +180,8 @@ export class TuyaBridge {
     let code: string, value: unknown, target: number | undefined;
     if (topic === `${base}/target/set`) {
       if (!/^(?:\d|[1-9]\d|100)$/.test(payload)) throw new Error('Expected an integer position from 0 to 100');
-      target = Number(payload); code = c.targetCode; value = toTuya(target, c);
+      code = c.targetCode; value = toTuya(Number(payload), c);
+      target = targetToHome(value, c);
     } else if (topic === `${base}/hold/set`) {
       if (['false', '0'].includes(payload)) return;
       if (!['true', '1'].includes(payload)) throw new Error('Expected true or false');
@@ -179,6 +199,7 @@ export class TuyaBridge {
     if (this.stopped || generation !== this.generation) return;
     state.target = target ?? state.current;
     state.pendingStop = target === undefined;
+    state.commandMotionObserved = false;
     state.movingUntil = Date.now() + this.config.motionTimeoutSeconds * 1000;
     // Cloud readings can look complete before the motor settles. Keep polling
     // frequently for at least 20 seconds after each accepted curtain command.
